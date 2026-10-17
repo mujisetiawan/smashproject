@@ -45,7 +45,6 @@ function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&l
 function setCategory(c){$('category').value=c;render();}
 async function load(){
  const {data,error}=await sb.from('articles  const {data,error}=await sb.from('articles').select('*').eq('status','Terbitkan').order('created_at',{ascending:false});
-
  if(error){$('articles').innerHTML='<div class="empty">Berita belum dapat dimuat. Periksa konfigurasi Supabase dan kebijakan RLS.</div>';console.error(error);return;}
  allArticles=data||[];render();
 }
