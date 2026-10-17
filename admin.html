@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Admin | Panas Indonesia</title>
+<style>
+:root{--red:#c91524;--dark:#171717;--bg:#f3f4f6}*{box-sizing:border-box}body{margin:0;background:var(--bg);font:15px Arial,sans-serif;color:#222}
+header{background:var(--dark);color:white;padding:18px}header b{font-size:22px}header span{color:#ff4654}
+main{max-width:900px;margin:22px auto;padding:0 14px}.box{background:white;padding:20px;border-radius:12px;margin-bottom:16px;box-shadow:0 2px 10px #00000008}
+h2{margin-top:0;font-size:20px}label{display:block;font-weight:bold;font-size:13px;margin:13px 0 6px}
+input,textarea,select{width:100%;padding:12px;border:1px solid #ddd;border-radius:7px;font:inherit;background:white}
+textarea{min-height:140px;resize:vertical}button{border:0;border-radius:7px;background:var(--red);color:white;padding:12px 15px;font-weight:bold;cursor:pointer;margin:8px 6px 0 0}
+button.secondary{background:#333}button.danger{background:#a00}button:disabled{opacity:.5}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}.status{padding:10px;border-radius:6px;background:#f1f1f1;margin:10px 0;white-space:pre-wrap}
+.item{border:1px solid #eee;padding:12px;border-radius:8px;margin-top:10px}.item h3{margin:0 0 6px;font-size:16px}.muted{font-size:12px;color:#666}.hidden{display:none!important}
+@media(max-width:600px){.row{grid-template-columns:1fr}.box{padding:15px}}
+</style>
+</head>
+<body>
+<header><b>PANAS <span>INDONESIA</span></b><div class="muted" style="color:#ccc;margin-top:5px">Panel Admin — kelola artikel, foto, dan video</div></header>
+<main>
+ <div class="box" id="loginBox">
+  <h2>Login Admin</h2>
+  <p class="muted">Gunakan email dan password admin yang dibuat di Supabase Authentication. Pendaftaran publik tidak disediakan.</p>
+  <label>Email admin</label><input id="email" type="email" autocomplete="username" placeholder="email-admin">
+  <label>Password</label><input id="password" type="password" autocomplete="current-password" placeholder="Password">
+  <button id="loginBtn">Login</button>
+  <div id="loginMsg" class="status" role="status">Masukkan akun admin.</div>
+ </div>
+
+ <section id="app" class="hidden">
+  <div class="box">
+   <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+    <h2>Editor Artikel</h2><button class="secondary" id="logoutBtn">Keluar</button>
+   </div>
+   <div id="appMsg" class="status" role="status">Login berhasil.</div>
+   <form id="articleForm">
+    <input id="articleId" type="hidden">
+    <label>Judul berita *</label><input id="title" maxlength="180" required placeholder="Tulis judul berita">
+    <div class="row">
+     <div><label>Kategori *</label><select id="category"><option>Nasional</option><option>Viral</option><option>Kriminal</option><option>Politik</option><option>Hiburan</option><option>Video</option><option>Teknologi</option><option>Otomotif</option></select></div>
+     <div><label>Status</label><select id="status"><option value="draft">Draf</option><option value="published">Terbitkan</option></select></div>
+    </div>
+    <label>Ringkasan *</label><textarea id="excerpt" required maxlength="500" style="min-height:75px" placeholder="Ringkasan singkat berita"></textarea>
+    <label>Isi berita *</label><textarea id="content" required placeholder="Tulis isi berita. Pastikan fakta dan sumber sudah diperiksa."></textarea>
+    <label>Foto utama (JPG/PNG/WEBP, maksimal 5 MB)</label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp">
+    <div id="photoMsg" class="muted">Foto opsional. Jika tidak memilih foto baru saat edit, foto lama dipertahankan.</div>
+    <label>Tautan video YouTube (opsional)</label><input id="video" type="url" placeholder="https://www.youtube.com/watch?v=...">
+    <button id="saveBtn" type="submit">Simpan Artikel</button><button type="button" class="secondary" id="resetBtn">Artikel Baru / Bersihkan</button>
+   </form>
+  </div>
+  <div class="box">
+   <h2>Daftar Artikel</h2>
+   <input id="adminSearch" type="search" placeholder="Cari judul..." style="margin-bottom:10px">
+   <button class="secondary" id="refreshBtn">Muat Ulang</button>
+   <div id="articleList"></div>
+  </div>
+ </section>
+ <div class="box muted">Keamanan: jangan pernah memasukkan Supabase service_role/secret key di HTML. File ini hanya boleh memakai publishable/anon key dan kebijakan RLS di database.</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* LANGKAH WAJIB: isi dua nilai ini dari Supabase > Project Settings > API.
+   Gunakan Project URL dan publishable key (atau anon public key lama), BUKAN secret/service_role key. */
+const SUPABASE_URL = "https://rcudmaeccalyxzzjgejk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_xCxPRb0qM4ZIKWRssbaLrQ_xM6c-5IR";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let currentUser = null;
+let articlesCache = [];
+
+const $ = id => document.getElementById(id);
+function msg(id,text){$(id).textContent=text;}
+function slugify(s){return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,100)||'berita';}
+function safeFileName(name){return name.toLowerCase().replace(/[^a-z0-9.-]/g,'-').replace(/-+/g,'-').slice(-100)||'foto.webp';}
+function showApp(user){
+ currentUser=user;
+ $('loginBox').classList.toggle('hidden',!!user);
+ $('app').classList.toggle('hidden',!user);
+ if(user){msg('appMsg','Login sebagai '+user.email);loadArticles();}
+}
+async function checkSession(){
+ const {data,error}=await sb.auth.getSession();
+ if(error) msg('loginMsg',error.message);
+ showApp(data.session?.user||null);
+}
+$('loginBtn').onclick=async()=>{
+ msg('loginMsg','Memeriksa akun...');
+ const {data,error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});
+ if(error){msg('loginMsg','Login gagal: '+error.message);return;}
+ showApp(data.user);
+};
+$('logoutBtn').onclick=async()=>{await sb.auth.signOut();showApp(null);msg('loginMsg','Kamu sudah keluar.');};
+$('resetBtn').onclick=()=>resetForm();
+function resetForm(){
+ $('articleForm').reset();$('articleId').value='';$('photoMsg').textContent='Foto opsional. Jika tidak memilih foto baru saat edit, foto lama dipertahankan.';
+ $('saveBtn').textContent='Simpan Artikel';
+}
+async function uploadPhoto(file){
+ if(!file)return '';
+ if(!['image/jpeg','image/png','image/webp'].includes(file.type))throw Error('Format foto harus JPG, PNG, atau WEBP.');
+ if(file.size>5*1024*1024)throw Error('Ukuran foto maksimal 5 MB.');
+ const path=Date.now()+'-'+crypto.randomUUID()+'-'+safeFileName(file.name);
+ const {error}=await sb.storage.from('news-images').upload(path,file,{upsert:false,contentType:file.type,cacheControl:'3600'});
+ if(error)throw error;
+ return sb.storage.from('news-images').getPublicUrl(path).data.publicUrl;
+}
+$('articleForm').onsubmit=async e=>{
+ e.preventDefault();
+ if(!currentUser){msg('appMsg','Silakan login ulang.');return;}
+ const title=$('title').value.trim(), excerpt=$('excerpt').value.trim(), content=$('content').value.trim();
+ if(!title||!excerpt||!content){msg('appMsg','Judul, ringkasan, dan isi wajib diisi.');return;}
+ const save=$('saveBtn');save.disabled=true;msg('appMsg','Menyimpan artikel...');
+ try{
+  const id=$('articleId').value;
+  const existing=articlesCache.find(a=>String(a.id)===String(id));
+  let image_url=existing?.image_url||'';
+  const file=$('photo').files[0];
+  if(file) image_url=await uploadPhoto(file);
+  const status=$('status').value;
+  const payload={
+   title,slug:slugify(title)+'-'+Date.now().toString().slice(-6),
+   category:$('category').value,excerpt,content,image_url,
+   video_url:$('video').value.trim(),status,updated_at:new Date().toISOString(),
+   published_at:status==='published'?(existing?.published_at||new Date().toISOString()):null
+  };
+  let result;
+  if(id){
+   delete payload.slug;
+   result=await sb.from('articles').update(payload).eq('id',Number(id)).select().single();
+  }else{
+   result=await sb.from('articles').insert(payload).select().single();
+  }
+  if(result.error)throw result.error;
+  msg('appMsg',status==='published'?'Artikel diterbitkan!':'Draf berhasil disimpan.');
+  resetForm();await loadArticles();
+ }catch(err){msg('appMsg','Gagal menyimpan: '+(err.message||String(err)));}
+ finally{save.disabled=false;}
+};
+async function loadArticles(){
+ msg('appMsg','Memuat daftar artikel...');
+ const {data,error}=await sb.from('articles').select('*').order('created_at',{ascending:false});
+ if(error){msg('appMsg','Gagal memuat: '+error.message);return;}
+ articlesCache=data||[];renderList();
+ msg('appMsg','Daftar artikel dimuat: '+articlesCache.length+' artikel.');
+}
+function renderList(){
+ const q=$('adminSearch').value.toLowerCase();
+ const arr=articlesCache.filter(a=>a.title.toLowerCase().includes(q));
+ $('articleList').innerHTML=arr.length?arr.map(a=>`
+ <div class="item">
+  <h3>${esc(a.title)}</h3>
+  <div class="muted">${esc(a.category)} · ${a.status==='published'?'Terbit':'Draf'} · ${new Date(a.created_at).toLocaleString('id-ID')}</div>
+  <button onclick="editArticle(${a.id})">Edit</button>
+  <button class="danger" onclick="deleteArticle(${a.id})">Hapus</button>
+  ${a.status==='published'?'<a target="_blank" rel="noopener" href="../"><button class="secondary" type="button">Lihat Website</button></a>':''}
+ </div>`).join(''):'<p>Belum ada artikel yang cocok.</p>';
+}
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+window.editArticle=id=>{
+ const a=articlesCache.find(x=>x.id===id);if(!a)return;
+ $('articleId').value=a.id;$('title').value=a.title;$('category').value=a.category;
+ $('excerpt').value=a.excerpt;$('content').value=a.content;$('video').value=a.video_url||'';
+ $('status').value=a.status;$('photo').value='';$('photoMsg').textContent=a.image_url?'Foto lama tersimpan. Pilih foto baru jika ingin mengganti.':'Belum ada foto.';
+ $('saveBtn').textContent='Simpan Perubahan';window.scrollTo({top:0,behavior:'smooth'});
+};
+window.deleteArticle=async id=>{
+ const a=articlesCache.find(x=>x.id===id);if(!a)return;
+ if(!confirm('Hapus artikel "'+a.title+'"? Tindakan ini tidak bisa dibatalkan.'))return;
+ const {error}=await sb.from('articles').delete().eq('id',id);
+ if(error){msg('appMsg','Gagal menghapus: '+error.message);return;}
+ msg('appMsg','Artikel dihapus.');await loadArticles();
+};
+$('adminSearch').oninput=renderList;$('refreshBtn').onclick=loadArticles;
+sb.auth.onAuthStateChange((_event,session)=>{showApp(session?.user||null);});
+checkSession();
+</script>
+</body>
+</html>
